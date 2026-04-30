@@ -42,11 +42,65 @@ const parseStringifiedParams = (value: unknown): unknown => {
   return value
 }
 
+/**
+ * Resolve the effective prefix for an MCP entry.
+ * If an explicit prefix is provided, use it.
+ * If autoPrefix is enabled and no explicit prefix, derive from id + "_".
+ * Otherwise, no prefix (empty string).
+ */
+const resolveMcpPrefix = (
+  mcp: { id: string; prefix?: string },
+  autoPrefix?: boolean
+): string => {
+  if (mcp.prefix !== undefined) {
+    return mcp.prefix
+  }
+  if (autoPrefix) {
+    return `${mcp.id}_`
+  }
+  return ''
+}
+
+/**
+ * Compose the final tool name from aggregator prefix, MCP prefix, and original tool name.
+ */
+const composeToolName = (
+  aggregatorPrefix: string | undefined,
+  mcpPrefix: string,
+  toolName: string
+): string => {
+  return `${aggregatorPrefix ?? ''}${mcpPrefix}${toolName}`
+}
+
+/**
+ * Resolve a collision by appending a numeric suffix.
+ * If "foo" is taken, try "foo_2", then "foo_3", etc.
+ */
+const resolveCollision = (
+  desiredName: string,
+  existingNames: Set<string>
+): string => {
+  if (!existingNames.has(desiredName)) {
+    return desiredName
+  }
+  let suffix = 2
+  // eslint-disable-next-line functional/no-loop-statements
+  while (existingNames.has(`${desiredName}_${suffix}`)) {
+    suffix++
+  }
+  return `${desiredName}_${suffix}`
+}
+
+interface ToolRoute {
+  client: Client
+  originalName: string
+}
+
 const create = (config: McpAggregatorConfig) => {
   // eslint-disable-next-line functional/no-let
   let clients: Record<string, Client> = {}
   // eslint-disable-next-line functional/no-let
-  let toolToClient: Record<string, Client> = {}
+  let toolRouting: Record<string, ToolRoute> = {}
 
   const createClient = async (connection: Connection) => {
     const transport = createTransport(connection)
@@ -65,16 +119,39 @@ const create = (config: McpAggregatorConfig) => {
       ).then(Object.fromEntries)
     },
     getTools: async () => {
-      toolToClient = {}
+      toolRouting = {}
+      const existingNames = new Set<string>()
       const allTools = await asyncMap(
-        Object.values(clients),
-        async client => {
+        Object.entries(clients),
+        async ([mcpId, client]) => {
           const tools = await client.listTools().then(x => x.tools)
-          tools.forEach(tool => {
+          // Find the MCP config entry for this client to resolve prefix
+          const mcpConfig = config.mcps.find(mcp => mcp.id === mcpId)
+          const mcpPrefix = mcpConfig
+            ? resolveMcpPrefix(mcpConfig, config.autoPrefix)
+            : ''
+          const aggPrefix = config.prefix
+
+          return tools.map(tool => {
+            const desiredName = composeToolName(aggPrefix, mcpPrefix, tool.name)
+            const finalName = resolveCollision(desiredName, existingNames)
+
+            if (finalName !== desiredName) {
+              console.warn(
+                `Tool name collision: "${tool.name}" from MCP "${mcpId}" would conflict. Renamed to "${finalName}".`
+              )
+            }
+
             // eslint-disable-next-line functional/immutable-data
-            toolToClient[tool.name] = client
+            existingNames.add(finalName)
+            // eslint-disable-next-line functional/immutable-data
+            toolRouting[finalName] = { client, originalName: tool.name }
+
+            return {
+              ...tool,
+              name: finalName,
+            }
           })
-          return tools
         },
         config.maxParallelCalls || DEFAULT_MAX_PARALLEL_CALLS
       )
@@ -83,13 +160,19 @@ const create = (config: McpAggregatorConfig) => {
     executeTool: async (toolName: string, params: any) => {
       // Parse any stringified JSON in params (defensive fix for Kai stringification bug)
       const parsedParams = parseStringifiedParams(params)
-      
-      const client = toolToClient[toolName]
-      return client
-        .callTool({ name: toolName, arguments: parsedParams as Record<string, unknown> | undefined })
+
+      const route = toolRouting[toolName]
+      if (!route) {
+        throw new Error(`Unknown tool: ${toolName}`)
+      }
+      return route.client
+        .callTool({
+          name: route.originalName,
+          arguments: parsedParams as Record<string, unknown> | undefined,
+        })
         .catch(() => [])
     },
   }
 }
 
-export { create }
+export { create, resolveMcpPrefix, composeToolName, resolveCollision }
