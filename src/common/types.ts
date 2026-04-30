@@ -181,9 +181,12 @@ export type McpAggregatorConfigBase = Readonly<{
     Readonly<{
       id: string
       connection: Connection
+      prefix?: string
     }>[]
   >
   maxParallelCalls?: number
+  prefix?: string
+  autoPrefix?: boolean
 }>
 
 /**
