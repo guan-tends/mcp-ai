@@ -1,7 +1,7 @@
 {
-  "name": "@l4t/mcp-ai",
-  "version": "1.6.0",
-  "description": "A set of tools for making integration and aggregation of MCP servers extremely easy.",
+  "name": "@guan/mcp-ai",
+  "version": "1.6.1-guan.0",
+  "description": "A set of tools for making integration and aggregation of MCP servers extremely easy. Forked from @l4t/mcp-ai by Mike Cornwell, with compatibility fixes and tool namespace prefixing.",
   "keywords": [
     "AI",
     "MCP",
@@ -13,7 +13,10 @@
     "integration"
   ],
   "license": "GPL-3.0-or-later",
-  "author": "Mike Cornwell",
+  "author": "Mike Cornwell <mike@mikecornwell.com>",
+  "contributors": [
+    "Guan <just.guan@proton.me>"
+  ],
   "type": "module",
   "main": "index.js",
   "bin": {
