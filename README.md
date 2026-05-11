@@ -1,6 +1,11 @@
 # The MCP Aggregation and Integration Library
 
-> Connect AI systems to MCPs, easily.
+> **Fork `@guan-tends/mcp-ai`** — Upstream: `@l4t/mcp-ai` by [Mike Cornwell](https://github.com/Leadership-4-Tech/mcp-ai).
+>
+> This fork includes **6 upstream bug fixes** (Zod cross-package detection, async handler
+> compatibility, Kai JSON array handling, SDK v1.29.0+ compatibility, double-wrapped args fix)
+> and a new **`autoPrefix` tool namespace prefixing** feature for aggregating servers with
+> overlapping tool names.
 
 ![Unit Tests](https://github.com/leadership-4-tech/mcp-ai/actions/workflows/ut.yml/badge.svg?branch=main)
 [![Coverage Status](https://coveralls.io/repos/github/Leadership-4-Tech/mcp-ai/badge.svg?branch=try-again)](https://coveralls.io/github/Leadership-4-Tech/mcp-ai?branch=try-again)
@@ -10,7 +15,7 @@ MCP servers are a pretty sweet idea, but having the ability to integrate them al
 ## Installation
 
 ```bash
-npm install @l4t/mcp-ai
+npm install @guan-tends/mcp-ai
 ```
 
 ## Tools
@@ -26,8 +31,8 @@ The following are the tools available in this library
 An integrator is a tool that helps connect an LLM to an MCP server (like the aggregator). It can be used to format tools for the LLM provider, extract tool calls from the LLM response, and execute tool calls.
 
 ```typescript
-import { createIntegrator } from '@l4t/mcp-ai/integrator'
-import { Provider } from '@l4t/mcp-ai'
+import { createIntegrator } from '@guan-tends/mcp-ai/integrator'
+import { Provider } from '@guan-tends/mcp-ai'
 
 // Create an integrator configuration
 const config = {
@@ -83,7 +88,7 @@ An aggregator is a MCP server that can aggregate multiple MCP servers into one. 
 This can also be useful for adapting one type of MCP server to another. For example, if Cursor doesn't support http, you can support an http aggregator by putting a SSE aggregator in front.
 
 ```typescript
-import { create } from '@l4t/mcp-ai/aggregator'
+import { create } from '@guan-tends/mcp-ai/aggregator'
 
 // Create an aggregator configuration
 const config = {
@@ -133,7 +138,7 @@ await server.stop()
 A SimpleServer is a configurable MCP server that can be easily adapted to different protocols (HTTP, SSE, CLI) while maintaining the same tool functionality. This makes it perfect for building custom MCP servers that can be deployed in different environments.
 
 ```typescript
-import { create } from '@l4t/mcp-ai/simple-server'
+import { create } from '@guan-tends/mcp-ai/simple-server'
 
 // Create a simple server configuration
 const config = {
@@ -268,12 +273,126 @@ The SimpleServer makes it easy to:
 - Focus on your tool logic while the server handles MCP protocol details
 - Maintain consistent behavior across different transport mechanisms
 
+## Tool Namespace Prefixing (New in Fork)
+
+When aggregating multiple MCP servers, you will often encounter **tool name
+collisions**: two different servers expose a tool with the same name (e.g., both
+have a `list_files` or `search` tool). Without prefixing, only one tool
+would be visible — the second silently overwrites the first. This fork adds
+**automatic and configurable namespace prefixing** to solve that problem
+gracefully.
+
+### Why This Matters
+
+Real-world example: You aggregate a filesystem MCP
+(`@modelcontextprotocol/server-filesystem`) and a memory MCP
+(`@modelcontextprotocol/server-memory`). Both expose a `search` tool. Without
+prefixing, `aggregator.getTools()` returns one `search` and drops the
+other. With `autoPrefix: true`, you get:
+
+- `filesystem_search`
+- `memory_search`
+
+Each tool remains individually callable. No data is lost. No ambiguity for the
+LLM.
+
+### Three Levels of Prefixing
+
+| Level | Source | Description | Example result |
+|-------|--------|-------------|---------------|
+| **Aggregator-level** | `config.prefix` | Prefix applied to *all* tools | `prod_` |
+| **MCP-level (explicit)** | `mcp.prefix` | Overrides auto-derived prefix for that MCP | `mem_` |
+| **MCP-level (automatic)** | `config.autoPrefix: true` | Derived from `mcp.id + "_"` | `filesystem_` |
+
+Prefixes compose left-to-right: `{aggregatorPrefix}{mcpPrefix}{toolName}`
+
+### Configuration Example
+
+```json
+{
+  "aggregator": {
+    "server": {
+      "connection": { "type": "http", "port": 3000 },
+      "maxParallelCalls": 10,
+      "prefix": "prod_"
+    },
+    "autoPrefix": true,
+    "mcps": [
+      {
+        "id": "filesystem",
+        "connection": {
+          "type": "cli",
+          "path": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]
+        }
+      },
+      {
+        "id": "memory",
+        "prefix": "mem_",
+        "connection": {
+          "type": "cli",
+          "path": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-memory"]
+        }
+      }
+    ]
+  }
+}
+```
+
+With the configuration above:
+
+- Filesystem tools: `prod_filesystem_listFiles`,
+  `prod_filesystem_readFile`, etc.
+- Memory tools: `prod_mem_listNotes`, `prod_mem_search`, etc.
+
+The aggregator-level `prod_` prefix is applied to every tool. The filesystem
+MCP gets its `id` as prefix because no explicit `prefix` is set. The memory
+MCP uses its explicit `mcp.prefix` override `mem_` instead of `memory_`.
+
+### Collision Resolution
+
+If two tools *still* produce the same final name (e.g., two MCPs both configured
+with `prefix: "db_"`), the second tool is automatically renamed with a numeric
+suffix and a console warning is emitted:
+
+```
+Tool name collision: "search" from MCP "db2" would conflict. Renamed to "db_search_2".
+```
+
+Collision resolution runs in the order MCPs are declared, giving you explicit
+control via ordering.
+
+### Using It in Code
+
+```typescript
+import { create } from '@guan-tends/mcp-ai/aggregator'
+
+const config = {
+  server: { connection: { type: "http", port: 3000 } },
+  prefix: "prod_",
+  autoPrefix: true,
+  mcps: [
+    { id: "filesystem", connection: { /* ... */ } },
+    { id: "memory", prefix: "mem_", connection: { /* ... */ } }
+  ]
+}
+
+const server = create(config)
+await server.start()
+
+const tools = await server.getTools()
+// tools contains all uniquely-named tools from both MCPs
+```
+
+Available since `@guan-tends/mcp-ai@1.6.1-guan.0`.
+
 ## Running Aggregator (server from CLI)
 
 If you install this library globally it will add the `mcp-aggregator.mts` script to be used for starting up aggregators in any context.
 
 ```bash
-npm i -g @l4t/mcp-ai argparse
+npm i -g @guan-tends/mcp-ai argparse
 ```
 
 Once you have it installed you can:
@@ -602,4 +721,13 @@ Depending on the provider, you may need to set these environment variables for t
 
 ## License
 
-GPL v3
+GPL-3.0-or-later
+
+Original library by [Mike Cornwell](https://github.com/Leadership-4-Tech/mcp-ai)<br/>
+— published as `@l4t/mcp-ai`.
+
+This fork maintained by [Guan](https://github.com/guan-tends)<br/>
+— published as [`@guan-tends/mcp-ai`](https://www.npmjs.com/package/@guan-tends/mcp-ai).
+
+Bug fixes and the `autoPrefix` feature are contributed back upstream via<br/>
+[PR #5](https://github.com/Leadership-4-Tech/mcp-ai/pull/5).
