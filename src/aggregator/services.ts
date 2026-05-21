@@ -8,6 +8,7 @@ import {
 import { createTransport } from '../common/libs.js'
 
 const DEFAULT_MAX_PARALLEL_CALLS = 10
+const DEFAULT_TOOL_TIMEOUT_MS = 180_000 // 3 minutes, configurable via aggregator.toolTimeoutMs
 
 /**
  * Defensive parser for stringified JSON values in params.
@@ -166,10 +167,14 @@ const create = (config: McpAggregatorConfig) => {
         throw new Error(`Unknown tool: ${toolName}`)
       }
       return route.client
-        .callTool({
-          name: route.originalName,
-          arguments: parsedParams as Record<string, unknown> | undefined,
-        })
+        .callTool(
+          {
+            name: route.originalName,
+            arguments: parsedParams as Record<string, unknown> | undefined,
+          },
+          undefined, // resultSchema (default)
+          { timeout: config.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS }
+        )
         .catch(() => [])
     },
   }

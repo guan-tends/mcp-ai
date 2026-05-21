@@ -187,6 +187,7 @@ export type McpAggregatorConfigBase = Readonly<{
   maxParallelCalls?: number
   prefix?: string
   autoPrefix?: boolean
+  toolTimeoutMs?: number // default: 180000 (3 minutes), raise/lower per environment
 }>
 
 /**
