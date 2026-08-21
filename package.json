@@ -1,6 +1,6 @@
 {
   "name": "@guan-tends/mcp-ai",
-  "version": "1.6.4-guan.0",
+  "version": "1.6.5-guan.0",
   "description": "A set of tools for making integration and aggregation of MCP servers extremely easy. Forked from @l4t/mcp-ai by Mike Cornwell, with compatibility fixes and tool namespace prefixing.",
   "keywords": [
     "AI",
@@ -18,7 +18,7 @@
     "Guan <just.guan@proton.me>"
   ],
   "type": "module",
-  "main": "index.js",
+  "main": "dist/index.js",
   "bin": {
     "mcp-aggregator": "./bin/mcp-aggregator.js"
   },
@@ -99,5 +99,16 @@
     "express": "^5.1.0",
     "modern-async": "^2.0.4",
     "zod": "^3.24.3"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": "./dist/index.js",
+    "./simple-server/index.js": "./dist/simple-server/index.js",
+    "./aggregator": "./dist/aggregator/index.js",
+    "./integrator": "./dist/integrator/index.js"
   }
 }
