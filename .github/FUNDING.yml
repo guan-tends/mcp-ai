@@ -1,0 +1,10 @@
+# These are the sponsorship/funding endpoints for this project.
+# Wallet addresses are self-custody (WAIaaS) and monitored directly by the maintainer.
+
+# Solana / EVM / XRP — multi-chain self-custody wallets
+custom:
+  [
+    'https://solscan.io/account/Eu8wQcW68TKMs1a6eqzZu8znzU52QLqQugAMG8uCD6y6',
+    'https://etherscan.io/address/0x2733ff7c865C56d565a99BE1DC11B81cc76850A5',
+    'https://xrpscan.com/account/r4X6e7McAQj7e8vBCeued1RYu4mCJrREDG',
+  ]

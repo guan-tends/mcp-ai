@@ -2,6 +2,7 @@ dist/
 node_modules/
 __pycache__/
 .idea/
+.serena/
 .env*
 .env.webpack
 .env.webpack.dev

@@ -33,11 +33,14 @@ const parseStringifiedParams = (value: unknown): unknown => {
   }
   // If it's an object, recursively parse each value
   if (value !== null && typeof value === 'object') {
-    return Object.entries(value).reduce((acc, [key, val]) => {
-      // eslint-disable-next-line functional/immutable-data
-      acc[key] = parseStringifiedParams(val)
-      return acc
-    }, {} as Record<string, unknown>)
+    return Object.entries(value).reduce(
+      (acc, [key, val]) => {
+        // eslint-disable-next-line functional/immutable-data
+        acc[key] = parseStringifiedParams(val)
+        return acc
+      },
+      {} as Record<string, unknown>
+    )
   }
   // Primitive value, return as-is
   return value
@@ -97,7 +100,16 @@ interface ToolRoute {
   originalName: string
 }
 
-const create = (config: McpAggregatorConfig) => {
+/**
+ * Optional dependencies for the aggregator service factory.
+ * Used for dependency injection in tests to mock client creation.
+ */
+interface AggregatorDeps {
+  /** Custom client factory. Defaults to the internal createClient which uses createTransport. */
+  createClientFn?: (connection: Connection) => Promise<Client>
+}
+
+const create = (config: McpAggregatorConfig, deps?: AggregatorDeps) => {
   // eslint-disable-next-line functional/no-let
   let clients: Record<string, Client> = {}
   // eslint-disable-next-line functional/no-let
@@ -110,14 +122,46 @@ const create = (config: McpAggregatorConfig) => {
     return client
   }
 
+  // Use injected factory if provided, otherwise use the internal one
+  const _createClient = deps?.createClientFn ?? createClient
+
   return {
     connect: async () => {
-      clients = await Promise.all(
-        config.mcps.map(async mcp => {
-          const client = await createClient(mcp.connection)
-          return [mcp.id, client]
+      // Filter out disabled MCPs — they are skipped entirely
+      const activeMcps = config.mcps.filter(mcp => {
+        if (mcp.disabled) {
+          console.info(`MCP "${mcp.id}" is disabled, skipping`)
+          return false
+        }
+        return true
+      })
+
+      // Use allSettled so one failed MCP doesn't crash the entire aggregator
+      const results = await Promise.allSettled(
+        activeMcps.map(async mcp => {
+          const client = await _createClient(mcp.connection)
+          return [mcp.id, client] as const
         })
-      ).then(Object.fromEntries)
+      )
+
+      // Collect only successfully connected clients; log failures without crashing
+      clients = results.reduce(
+        (acc, result, index) => {
+          if (result.status === 'fulfilled') {
+            const [id, client] = result.value
+            // eslint-disable-next-line functional/immutable-data
+            acc[id] = client
+          } else {
+            // Log the failure but don't crash — other MCPs still work
+            const failedMcp = activeMcps[index]
+            console.error(
+              `MCP "${failedMcp?.id ?? 'unknown'}" failed to connect: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`
+            )
+          }
+          return acc
+        },
+        {} as Record<string, Client>
+      )
     },
     getTools: async () => {
       toolRouting = {}
@@ -125,34 +169,47 @@ const create = (config: McpAggregatorConfig) => {
       const allTools = await asyncMap(
         Object.entries(clients),
         async ([mcpId, client]) => {
-          const tools = await client.listTools().then(x => x.tools)
-          // Find the MCP config entry for this client to resolve prefix
-          const mcpConfig = config.mcps.find(mcp => mcp.id === mcpId)
-          const mcpPrefix = mcpConfig
-            ? resolveMcpPrefix(mcpConfig, config.autoPrefix)
-            : ''
-          const aggPrefix = config.prefix
+          // Per-client try/catch: one failed listTools() doesn't kill all tool discovery
+          // eslint-disable-next-line functional/no-try-statements
+          try {
+            const tools = await client.listTools().then(x => x.tools)
+            // Find the MCP config entry for this client to resolve prefix
+            const mcpConfig = config.mcps.find(mcp => mcp.id === mcpId)
+            const mcpPrefix = mcpConfig
+              ? resolveMcpPrefix(mcpConfig, config.autoPrefix)
+              : ''
+            const aggPrefix = config.prefix
 
-          return tools.map(tool => {
-            const desiredName = composeToolName(aggPrefix, mcpPrefix, tool.name)
-            const finalName = resolveCollision(desiredName, existingNames)
-
-            if (finalName !== desiredName) {
-              console.warn(
-                `Tool name collision: "${tool.name}" from MCP "${mcpId}" would conflict. Renamed to "${finalName}".`
+            return tools.map(tool => {
+              const desiredName = composeToolName(
+                aggPrefix,
+                mcpPrefix,
+                tool.name
               )
-            }
+              const finalName = resolveCollision(desiredName, existingNames)
 
-            // eslint-disable-next-line functional/immutable-data
-            existingNames.add(finalName)
-            // eslint-disable-next-line functional/immutable-data
-            toolRouting[finalName] = { client, originalName: tool.name }
+              if (finalName !== desiredName) {
+                console.warn(
+                  `Tool name collision: "${tool.name}" from MCP "${mcpId}" would conflict. Renamed to "${finalName}".`
+                )
+              }
 
-            return {
-              ...tool,
-              name: finalName,
-            }
-          })
+              existingNames.add(finalName)
+              // eslint-disable-next-line functional/immutable-data
+              toolRouting[finalName] = { client, originalName: tool.name }
+
+              return {
+                ...tool,
+                name: finalName,
+              }
+            })
+          } catch (error) {
+            // Log and return empty array — other clients' tools still collected
+            console.error(
+              `MCP "${mcpId}" failed to list tools: ${error instanceof Error ? error.message : String(error)}`
+            )
+            return []
+          }
         },
         config.maxParallelCalls || DEFAULT_MAX_PARALLEL_CALLS
       )
@@ -166,6 +223,12 @@ const create = (config: McpAggregatorConfig) => {
       if (!route) {
         throw new Error(`Unknown tool: ${toolName}`)
       }
+
+      // Find the MCP id for this tool for error reporting
+      const mcpId =
+        Object.entries(clients).find(([, c]) => c === route.client)?.[0] ??
+        'unknown'
+
       return route.client
         .callTool(
           {
@@ -175,9 +238,25 @@ const create = (config: McpAggregatorConfig) => {
           undefined, // resultSchema (default)
           { timeout: config.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS }
         )
-        .catch(() => [])
+        .catch((error: unknown) => {
+          // Structured MCP error response — don't crash, report clearly
+          const message = error instanceof Error ? error.message : String(error)
+          console.error(
+            `MCP "${mcpId}" tool "${toolName}" execution failed: ${message}`
+          )
+          return {
+            isError: true,
+            content: [
+              {
+                type: 'text' as const,
+                text: `MCP "${mcpId}" tool "${toolName}" execution failed: ${message}`,
+              },
+            ],
+          }
+        })
     },
   }
 }
 
 export { create, resolveMcpPrefix, composeToolName, resolveCollision }
+export type { AggregatorDeps }

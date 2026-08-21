@@ -7,3 +7,4 @@ coverage
 doc/api/openapi/openapi.yml.hbs
 doc/api/openapi/openapi.yml
 *.handlebars
+.serena/

@@ -182,6 +182,12 @@ export type McpAggregatorConfigBase = Readonly<{
       id: string
       connection: Connection
       prefix?: string
+      /**
+       * When true, this MCP server is skipped during connection.
+       * Useful for temporarily disabling servers without removing config.
+       * @default false (absence = active, backward compatible)
+       */
+      disabled?: boolean
     }>[]
   >
   maxParallelCalls?: number

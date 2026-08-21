@@ -1,14 +1,15 @@
 import type { McpAggregatorConfig } from '../common/types.js'
 
 import { create as createServices } from './services.js'
+import type { AggregatorDeps } from './services.js'
 
-const create = (config: McpAggregatorConfig) => {
+const create = (config: McpAggregatorConfig, deps?: AggregatorDeps) => {
   // eslint-disable-next-line functional/no-let
   let services: ReturnType<typeof createServices> | undefined
 
   return {
     connect: async () => {
-      services = createServices(config)
+      services = createServices(config, deps)
       await services.connect()
     },
     getTools: async () => {

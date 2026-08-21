@@ -298,11 +298,11 @@ LLM.
 
 ### Three Levels of Prefixing
 
-| Level | Source | Description | Example result |
-|-------|--------|-------------|---------------|
-| **Aggregator-level** | `config.prefix` | Prefix applied to *all* tools | `prod_` |
-| **MCP-level (explicit)** | `mcp.prefix` | Overrides auto-derived prefix for that MCP | `mem_` |
-| **MCP-level (automatic)** | `config.autoPrefix: true` | Derived from `mcp.id + "_"` | `filesystem_` |
+| Level                     | Source                    | Description                                | Example result |
+| ------------------------- | ------------------------- | ------------------------------------------ | -------------- |
+| **Aggregator-level**      | `config.prefix`           | Prefix applied to _all_ tools              | `prod_`        |
+| **MCP-level (explicit)**  | `mcp.prefix`              | Overrides auto-derived prefix for that MCP | `mem_`         |
+| **MCP-level (automatic)** | `config.autoPrefix: true` | Derived from `mcp.id + "_"`                | `filesystem_`  |
 
 Prefixes compose left-to-right: `{aggregatorPrefix}{mcpPrefix}{toolName}`
 
@@ -352,7 +352,7 @@ MCP uses its explicit `mcp.prefix` override `mem_` instead of `memory_`.
 
 ### Collision Resolution
 
-If two tools *still* produce the same final name (e.g., two MCPs both configured
+If two tools _still_ produce the same final name (e.g., two MCPs both configured
 with `prefix: "db_"`), the second tool is automatically renamed with a numeric
 suffix and a console warning is emitted:
 
@@ -369,13 +369,24 @@ control via ordering.
 import { create } from '@guan-tends/mcp-ai/aggregator'
 
 const config = {
-  server: { connection: { type: "http", port: 3000 } },
-  prefix: "prod_",
+  server: { connection: { type: 'http', port: 3000 } },
+  prefix: 'prod_',
   autoPrefix: true,
   mcps: [
-    { id: "filesystem", connection: { /* ... */ } },
-    { id: "memory", prefix: "mem_", connection: { /* ... */ } }
-  ]
+    {
+      id: 'filesystem',
+      connection: {
+        /* ... */
+      },
+    },
+    {
+      id: 'memory',
+      prefix: 'mem_',
+      connection: {
+        /* ... */
+      },
+    },
+  ],
 }
 
 const server = create(config)
@@ -386,6 +397,69 @@ const tools = await server.getTools()
 ```
 
 Available since `@guan-tends/mcp-ai@1.6.1-guan.0`.
+
+## Disabling MCP Servers (New in Fork)
+
+Sometimes you need to temporarily disable an MCP server without removing its
+configuration — for debugging, maintenance, or when a server is known to be
+down. The `disabled` flag lets you do this:
+
+```json
+{
+  "mcps": [
+    {
+      "id": "filesystem",
+      "connection": {
+        "type": "cli",
+        "path": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]
+      }
+    },
+    {
+      "id": "memory",
+      "disabled": true,
+      "connection": {
+        "type": "cli",
+        "path": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-memory"]
+      }
+    }
+  ]
+}
+```
+
+When `disabled: true`, the MCP server is skipped entirely during connection.
+No client is spawned, no tools are collected, and no errors are raised.
+The server is logged as skipped via `console.info`.
+
+- `disabled: true` → server is skipped
+- `disabled: false` → server is active (same as omitting the field)
+- `disabled: undefined` → server is active (backward compatible)
+
+Available since `@guan-tends/mcp-ai@1.6.6-guan.0`.
+
+## Runtime Resilience (New in Fork)
+
+The aggregator is designed to survive individual MCP server failures without
+crashing the entire process:
+
+- **Connection failures**: If one MCP server fails to connect at boot, the
+  aggregator logs the error and continues with the remaining servers. The
+  failed server's tools are simply unavailable — all other servers operate
+  normally.
+
+- **Tool listing failures**: If `listTools()` fails for one MCP during
+  `getTools()`, that MCP contributes zero tools. Other MCPs' tools are still
+  collected and returned.
+
+- **Tool execution failures**: If `callTool()` fails during execution, a
+  structured MCP error response is returned (`{ isError: true, content: [...] }`)
+  with a descriptive message. The aggregator process remains healthy.
+
+This means a single broken MCP server can no longer take down your entire
+aggregation gateway.
+
+Available since `@guan-tends/mcp-ai@1.6.6-guan.0`.
 
 ## Running Aggregator (server from CLI)
 
